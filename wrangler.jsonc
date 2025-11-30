@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "xendit-worker",
+	"name": "mhrm",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-11-28",
 	"observability": {
