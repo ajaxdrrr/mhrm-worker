@@ -1,114 +1,96 @@
-export interface Env {
-	XENDIT_SECRET_KEY: string;
-  }
+const handleUpgradeToPro = async () => {
+	const uid = auth.currentUser?.uid;
   
-  function jsonResponse(
-	status: number,
-	body: unknown,
-	extraHeaders: Record<string, string> = {}
-  ): Response {
-	return new Response(JSON.stringify(body), {
-	  status,
-	  headers: {
-		"Content-Type": "application/json",
-		"Access-Control-Allow-Origin": "*",
-		"Access-Control-Allow-Headers": "Content-Type, Authorization",
-		"Access-Control-Allow-Methods": "POST, OPTIONS",
-		...extraHeaders,
-	  },
-	});
-  }
-  
-  export default {
-	async fetch(request: Request, env: Env): Promise<Response> {
-	  const url = new URL(request.url);
-  
-	  // Only handle this specific route
-	  if (url.pathname !== "/create-xendit-invoice") {
-		return jsonResponse(404, { error: "Not found" });
-	  }
-  
-	  // Handle CORS preflight
-	  if (request.method === "OPTIONS") {
-		return new Response(null, {
-		  status: 204,
-		  headers: {
-			"Access-Control-Allow-Origin": "*",
-			"Access-Control-Allow-Headers": "Content-Type, Authorization",
-			"Access-Control-Allow-Methods": "POST, OPTIONS",
+	if (!uid) {
+	  Alert.alert(
+		"Sign in required",
+		"Please sign in to upgrade to the Pro plan.",
+		[
+		  {
+			text: "Go to login",
+			onPress: () => router.push("/login"),
 		  },
-		});
+		  { text: "Cancel", style: "cancel" },
+		]
+	  );
+	  return;
+	}
+  
+	try {
+	  setUpgrading(true);
+  
+	  // 1) Create Xendit invoice via Cloudflare Worker
+	  const res = await fetch(XENDIT_CREATE_URL, {
+		method: "POST",
+		headers: {
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+		  amount: 199, // adjust to your desired currency representation
+		  description: "Receipt Manager Pro - Monthly Plan",
+		  userId: uid,
+		}),
+	  });
+  
+	  if (!res.ok) {
+		const text = await res.text();
+		console.log("Xendit worker error:", text);
+		throw new Error(text || "Failed to create invoice");
 	  }
   
-	  if (request.method !== "POST") {
-		return jsonResponse(405, { error: "Method not allowed" });
+	  const data: any = await res.json();
+	  const invoiceUrl = data?.invoice_url;
+	  const invoiceId = data?.id;
+  
+	  if (!invoiceUrl || !invoiceId) {
+		console.log("Invalid Xendit worker response:", data);
+		throw new Error("Invoice data missing from server response");
 	  }
   
-	  const XENDIT_SECRET_KEY = env.XENDIT_SECRET_KEY;
-	  if (!XENDIT_SECRET_KEY) {
-		console.error("Xendit secret key missing in environment");
-		return jsonResponse(500, { error: "Xendit secret key not configured" });
+	  // 2) Open Xendit hosted payment page
+	  await WebBrowser.openBrowserAsync(invoiceUrl);
+  
+	  // 3) After browser is closed, ask our Worker for final status
+	  const statusRes = await fetch(XENDIT_CHECK_URL, {
+		method: "POST",
+		headers: {
+		  "Content-Type": "application/json",
+		},
+		body: JSON.stringify({ invoiceId }),
+	  });
+  
+	  if (!statusRes.ok) {
+		const text = await statusRes.text();
+		console.log("Check invoice error:", text);
+		throw new Error("Failed to verify payment status.");
 	  }
   
-	  try {
-		const body = (await request.json()) as {
-		  amount?: number;
-		  description?: string;
-		  userId?: string;
-		};
+	  const statusData: any = await statusRes.json();
+	  const status = statusData?.status;
+	  console.log("Invoice status:", status);
   
-		const { amount, description, userId } = body;
+	  if (status === "PAID") {
+		// 4) Mark user as paid in Realtime Database
+		await set(ref(db, `users/${uid}/payment`), true);
   
-		if (!amount || !userId) {
-		  return jsonResponse(400, {
-			error: "Missing required fields: amount, userId",
-		  });
-		}
-  
-		const externalId = `user_${userId}_${Date.now()}`;
-  
-		// Call Xendit
-		const xenditResponse = await fetch("https://api.xendit.co/v2/invoices", {
-		  method: "POST",
-		  headers: {
-			"Content-Type": "application/json",
-			Authorization:
-			  "Basic " + btoa(`${XENDIT_SECRET_KEY}:`), // username:password (password empty)
-		  },
-		  body: JSON.stringify({
-			external_id: externalId,
-			amount,
-			description: description || "Receipt Manager Pro Plan",
-			success_redirect_url:
-			  "https://your-app-domain.com/payment-success",
-			failure_redirect_url:
-			  "https://your-app-domain.com/payment-failed",
-		  }),
-		});
-  
-		if (!xenditResponse.ok) {
-		  const errorBody = await xenditResponse.text();
-		  console.error("Xendit error response:", errorBody);
-		  return jsonResponse(500, {
-			error: "Failed to create Xendit invoice",
-			details: errorBody,
-		  });
-		}
-  
-		const data = await xenditResponse.json();
-  
-		return jsonResponse(200, {
-		  invoice_url: data.invoice_url,
-		  id: data.id,
-		  status: data.status,
-		});
-	  } catch (err: any) {
-		console.error("Xendit error:", err?.stack || err?.message || err);
-		return jsonResponse(500, {
-		  error: "Failed to create Xendit invoice",
-		  details: err?.message || String(err),
-		});
+		Alert.alert(
+		  "Pro plan activated 🎉",
+		  "Your payment was successful. You now have unlimited scans."
+		);
+	  } else {
+		Alert.alert(
+		  "Payment not completed",
+		  "We didn't detect a successful payment yet. If you already paid, please wait a moment and try again."
+		);
 	  }
-	},
-  } satisfies ExportedHandler<Env>;
+	} catch (err: any) {
+	  console.error("Upgrade error:", err);
+	  Alert.alert(
+		"Upgrade failed",
+		err?.message || "Something went wrong while upgrading your plan."
+	  );
+	} finally {
+	  setUpgrading(false);
+	}
+  };
   
