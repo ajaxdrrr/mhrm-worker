@@ -140,34 +140,57 @@ export default {
   
 		  if (status === "PAID") {
 			// ✅ Update Firebase RTDB (rules are open, so no auth)
-			const dbUrl = env.FIREBASE_DB_URL; // e.g. https://mhrm-a0b26-default-rtdb.asia-southeast1.firebasedatabase.app
-  
-			if (!dbUrl) {
-			  console.error("FIREBASE_DB_URL missing in env");
-			} else {
-			  const firebaseRes = await fetch(
-				`${dbUrl}/users/${encodeURIComponent(userId)}.json`,
-				{
-				  method: "PATCH",
-				  headers: { "Content-Type": "application/json" },
-				  body: JSON.stringify({ payment: true }),
+			const status = invoice?.status;
+			console.log("Invoice status on success redirect:", status);
+	  
+			if (status === "PAID") {
+			  // ✅ Update Firebase RTDB with payment + subscription dates
+			  const dbUrl = env.FIREBASE_DB_URL; // or hardcode if you prefer
+	  
+			  if (!dbUrl) {
+				console.error("FIREBASE_DB_URL missing in env");
+			  } else {
+				const now = new Date();
+	  
+				// Start: today
+				const subscriptionStart = formatDatePretty(now);
+	  
+				// End: last day of this month
+				const endOfMonth = new Date(
+				  now.getFullYear(),
+				  now.getMonth() + 1,
+				  0 // day 0 of next month = last day of current month
+				);
+				const subscriptionEnd = formatDatePretty(endOfMonth);
+	  
+				const firebaseRes = await fetch(
+				  `${dbUrl}/users/${encodeURIComponent(userId)}.json`,
+				  {
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+					  payment: true,
+					  subscription_start: subscriptionStart,
+					  subscription_end: subscriptionEnd,
+					}),
+				  }
+				);
+	  
+				if (!firebaseRes.ok) {
+				  const fbTxt = await firebaseRes.text();
+				  console.error("Firebase update error:", fbTxt);
 				}
-			  );
-  
-			  if (!firebaseRes.ok) {
-				const fbTxt = await firebaseRes.text();
-				console.error("Firebase update error:", fbTxt);
 			  }
+	  
+			  // Thank you page
+			  return html(
+				200,
+				`
+				  <h1>Payment successful 🎉</h1>
+				  <p>Your subscription is now active. You can close this tab and return to the app.</p>
+				`
+			  );
 			}
-  
-			// Thank you page
-			return html(
-			  200,
-			  `
-				<h1>Payment successful 🎉</h1>
-				<p>You can now close this tab and go back to the app.</p>
-			  `
-			);
 		  }
   
 		  // Not paid yet
@@ -222,5 +245,18 @@ export default {
 		headers: { "Content-Type": "text/html; charset=utf-8" },
 	  }
 	);
+  }
+
+  function formatDatePretty(date) {
+	const monthNames = [
+	  "January", "February", "March", "April", "May", "June",
+	  "July", "August", "September", "October", "November", "December",
+	];
+  
+	const month = monthNames[date.getMonth()];
+	const day = date.getDate();
+	const year = date.getFullYear();
+  
+	return `${month} ${day}, ${year}`;
   }
   
