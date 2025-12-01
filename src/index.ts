@@ -140,7 +140,7 @@ export default {
   
 		  if (status === "PAID") {
 			// ✅ Update Firebase RTDB (rules are open, so no auth)
-			const dbUrl = "https://mhrm-a0b26-default-rtdb.firebaseio.com"; // e.g. https://mhrm-a0b26-default-rtdb.asia-southeast1.firebasedatabase.app
+			const dbUrl = env.FIREBASE_DB_URL; // e.g. https://mhrm-a0b26-default-rtdb.asia-southeast1.firebasedatabase.app
   
 			if (!dbUrl) {
 			  console.error("FIREBASE_DB_URL missing in env");
